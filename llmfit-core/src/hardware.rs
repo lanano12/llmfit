@@ -148,12 +148,15 @@ impl SystemSpecs {
             gpus.extend(nvidia);
         }
 
-        // AMD GPUs via rocm-smi or sysfs
+        // AMD GPUs via rocm-smi plus Linux DRM sysfs. On Strix Halo, ROCm can
+        // see the APU while DRM sysfs is the reliable source for the BIOS
+        // VRAM/SRAM carveout (e.g. 96 GiB VRAM + 32 GiB SRAM).
         let amd_rocm = Self::detect_amd_gpu_rocm_info();
+        let amd_sysfs = Self::detect_amd_gpu_sysfs_info();
         if amd_rocm.is_empty() {
-            gpus.extend(Self::detect_amd_gpu_sysfs_info());
+            gpus.extend(amd_sysfs);
         } else {
-            gpus.extend(amd_rocm);
+            gpus.extend(Self::merge_amd_sysfs_into_rocm(amd_rocm, amd_sysfs));
         }
 
         // Windows WMI (catches GPUs not found by vendor-specific tools)
@@ -180,14 +183,23 @@ impl SystemSpecs {
         // Win32_PhysicalMemory, which reads SMBIOS and is unaffected by the
         // carveout, so model fit estimates reflect the full memory pool.
         if is_amd_unified_memory_apu(cpu_name) {
-            let apu_pool_gb = detect_windows_physical_total_ram_gb().unwrap_or(total_ram_gb);
+            let detected_amd_vram_gb = gpus
+                .iter()
+                .filter(|g| {
+                    let lower = g.name.to_lowercase();
+                    lower.contains("amd") || lower.contains("radeon")
+                })
+                .filter_map(|g| g.vram_gb)
+                .fold(0.0, f64::max);
+            let apu_pool_gb = detect_windows_physical_total_ram_gb()
+                .unwrap_or(detected_amd_vram_gb.max(total_ram_gb));
             let amd_idx = gpus.iter().position(|g| {
                 let lower = g.name.to_lowercase();
                 lower.contains("amd") || lower.contains("radeon")
             });
             if let Some(idx) = amd_idx {
                 gpus[idx].unified_memory = true;
-                gpus[idx].vram_gb = Some(apu_pool_gb);
+                gpus[idx].vram_gb = Some(gpus[idx].vram_gb.unwrap_or(0.0).max(apu_pool_gb));
             } else {
                 // No AMD GPU found via other methods; create one.
                 gpus.push(GpuInfo {
@@ -764,6 +776,47 @@ impl SystemSpecs {
                 }
             })
             .collect()
+    }
+
+    /// Combine ROCm's product/backend detection with Linux DRM sysfs VRAM.
+    ///
+    /// Some AMD unified-memory systems, notably Ryzen AI MAX / Strix Halo,
+    /// expose the BIOS-configured GPU carveout accurately via
+    /// `/sys/class/drm/card*/device/mem_info_vram_total`, while `rocm-smi`
+    /// may report a smaller CPU-visible SRAM value or no useful VRAM. Keep
+    /// ROCm as the backend when present, but let sysfs fill or raise the VRAM.
+    fn merge_amd_sysfs_into_rocm(
+        mut rocm_gpus: Vec<GpuInfo>,
+        sysfs_gpus: Vec<GpuInfo>,
+    ) -> Vec<GpuInfo> {
+        for sysfs_gpu in sysfs_gpus {
+            let sysfs_name_lower = sysfs_gpu.name.to_lowercase();
+            let match_idx = rocm_gpus.iter().position(|rocm_gpu| {
+                if Self::is_same_gpu_name(&rocm_gpu.name, &sysfs_gpu.name) {
+                    return true;
+                }
+                let rocm_name_lower = rocm_gpu.name.to_lowercase();
+                // Strix Halo is often named generically by one source and as
+                // Radeon 8050S/8060S by another.
+                (rocm_name_lower.contains("amd") || rocm_name_lower.contains("radeon"))
+                    && (sysfs_name_lower.contains("amd") || sysfs_name_lower.contains("radeon"))
+                    && rocm_gpus.len() == 1
+            });
+
+            if let Some(idx) = match_idx {
+                if let Some(sysfs_vram) = sysfs_gpu.vram_gb {
+                    let current = rocm_gpus[idx].vram_gb.unwrap_or(0.0);
+                    if sysfs_vram > current {
+                        rocm_gpus[idx].vram_gb = Some(sysfs_vram);
+                    }
+                }
+                rocm_gpus[idx].unified_memory |= sysfs_gpu.unified_memory;
+            } else {
+                rocm_gpus.push(sysfs_gpu);
+            }
+        }
+
+        rocm_gpus
     }
 
     /// Detect AMD GPUs via sysfs on Linux (works without ROCm installed).
@@ -3582,6 +3635,30 @@ GPU[0]          : VRAM Total Used Memory (B): 200000";
         assert_eq!(gpus.len(), 1);
         assert_eq!(gpus[0].name, "AMD GPU");
         assert!(gpus[0].vram_gb.unwrap() > 31.0);
+    }
+
+    #[test]
+    fn test_amd_sysfs_vram_raises_rocm_vram_for_strix_halo() {
+        let rocm_gpus = vec![super::GpuInfo {
+            name: "AMD Radeon Graphics".to_string(),
+            vram_gb: Some(32.0),
+            backend: super::GpuBackend::Rocm,
+            count: 1,
+            unified_memory: false,
+        }];
+        let sysfs_gpus = vec![super::GpuInfo {
+            name: "Strix Halo [Radeon Graphics / Radeon 8060S Graphics]".to_string(),
+            vram_gb: Some(96.0),
+            backend: super::GpuBackend::Vulkan,
+            count: 1,
+            unified_memory: false,
+        }];
+
+        let merged = SystemSpecs::merge_amd_sysfs_into_rocm(rocm_gpus, sysfs_gpus);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].backend, super::GpuBackend::Rocm);
+        assert_eq!(merged[0].vram_gb, Some(96.0));
     }
 
     // Newer rocm-smi emits a tabular layout instead of one line per field.
