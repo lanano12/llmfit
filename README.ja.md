@@ -17,7 +17,9 @@
   <a href="https://about.signpath.io"><img src="https://img.shields.io/badge/SignPath-signed-brightgreen?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgZmlsbD0id2hpdGUiIHZpZXdCb3g9IjAgMCAxNiAxNiI+PHBhdGggZD0iTTEwLjA2NyA0LjU2N2wtNC43MzQgNC43MzMtMS40LTEuNGExIDEgMCAwIDAtMS40MTQgMS40MTRsMi4xIDIuMWExIDEgMCAwIDAgMS40MTQgMGw1LjQ0LTUuNDRhMSAxIDAgMCAwLTEuNDE0LTEuNDE0eiIvPjwvc3ZnPg==" alt="SignPath で署名済み"></a>
 </p>
 
-> **新機能: [コミュニティリーダーボード](#コミュニティリーダーボード-b)** — 実際のユーザーから集まった実環境のパフォーマンスデータを閲覧できます。`b` を押すと、自分のものに限らず、あらゆる GPU の実測 tok/s、TTFT、VRAM を確認できます。`H` で 27 種類以上のハードウェアプリセット（RTX 5090 から Apple M1 まで）から選び、購入や自作の前に実数値を比較しましょう。
+> **📊 新機能：ベンチマーク＆共有 — あなたのマシンの実測値が、みんなの推定精度を高めます。** `llmfit bench --share` はあなたのハードウェアで実際の tok/s を計測し、PR としてプロジェクトに還元します — `gh` CLI もサードパーティのアカウントも不要です。実行結果はまずローカルに保存され（共有をスキップして、後からまとめてアップロードも可能）、自分の実測値はフィットテーブルの推定値を置き換えます。マージされた提出は次のリリースに同梱され、同一ハードウェアのユーザーはベンチマークを実行する前から実測 `✓` 値と校正済みの推定値を得られます。[共有をはじめる →](docs/cli.md#contributing-benchmarks-bench---share)
+>
+> *これまで：[llmfit 1.0 — すべての数値が検証可能になったリリース →](https://github.com/AlexsJones/llmfit/discussions/708)*
 
 **数百のモデルとプロバイダー。自分のハードウェアで動くものを見つけるコマンドはひとつ。**
 
@@ -970,6 +972,18 @@ cp -r skills/llmfit-advisor ~/.openclaw/skills/
 ## 代替ツール
 
 別のアプローチをお探しなら、[llm-checker](https://github.com/Pavelevich/llm-checker) をチェックしてください。これは Ollama 統合を備えた Node.js 製の CLI ツールで、モデルを直接 pull してベンチマークできます。スペックから推定するのではなく、実際に Ollama 経由でハードウェア上でモデルを動かすという、より実践的なアプローチを取ります。すでに Ollama がインストールされていて実環境のパフォーマンスをテストしたい場合に適しています。ただし MoE（Mixture-of-Experts）アーキテクチャはサポートしていない点に注意してください。すべてのモデルが密（dense）として扱われるため、Mixtral や DeepSeek-V3 のようなモデルのメモリ推定値は、より小さいアクティブな部分集合ではなく総パラメータ数を反映します。
+
+---
+
+## コード署名
+
+llmfit の Windows リリースバイナリは [SignPath.io](https://about.signpath.io/) によりデジタル署名（Authenticode）されており、コード署名証明書は [SignPath Foundation](https://signpath.org/) から無償で提供されています。
+
+署名は[リリースパイプライン](.github/workflows/release.yml)で自動的に行われます。署名に提出されるのは GitHub Actions によって本リポジトリからビルドされた成果物のみで、署名リクエストはプロジェクトメンテナー（[@AlexsJones](https://github.com/AlexsJones)）が承認します。
+
+**コード署名ポリシー：**[SignPath Foundation のコード署名ポリシーと利用規約](https://signpath.org/terms)を参照してください。
+
+**プライバシー：**本プログラムは、ユーザーまたは本プログラムをインストール・操作する人が明示的に要求しない限り、他のネットワークシステムへ情報を送信することはありません。llmfit が外部サービスにアクセスするのは、該当機能（モデルのダウンロード、ランタイムプロバイダーへの問い合わせ、コミュニティリーダーボードなど）を明示的に使用した場合のみです。
 
 ---
 

@@ -17,7 +17,9 @@
   <a href="https://about.signpath.io"><img src="https://img.shields.io/badge/SignPath-signed-brightgreen?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgZmlsbD0id2hpdGUiIHZpZXdCb3g9IjAgMCAxNiAxNiI+PHBhdGggZD0iTTEwLjA2NyA0LjU2N2wtNC43MzQgNC43MzMtMS40LTEuNGExIDEgMCAwIDAtMS40MTQgMS40MTRsMi4xIDIuMWExIDEgMCAwIDAgMS40MTQgMGw1LjQ0LTUuNDRhMSAxIDAgMCAwLTEuNDE0LTEuNDE0eiIvPjwvc3ZnPg==" alt="Signed with SignPath"></a>
 </p>
 
-> **新功能：[社区排行榜](#社区排行榜-b)** — 浏览真实用户的实际性能数据。按 `b` 键查看任意 GPU（不仅限于你的设备）实测的 tok/s、TTFT 和 VRAM 数据。从 RTX 5090 到 Apple M1 的 27+ 种硬件预设中进行选择，按 `H` 键在购买或组装硬件前比较真实数据。
+> **📊 新功能：基准测试与共享 — 来自你机器的真实数据，让所有人的估算更准确。** `llmfit bench --share` 在你的硬件上实测 tok/s，并以 PR 的形式贡献回项目 — 无需 `gh` CLI，也无需第三方账号。每次测试结果都会先保存在本地（可以暂不共享，之后随时批量上传），你自己的实测值会替换拟合表中的估算值；每条合并的提交都会随下一个版本发布：相同硬件的用户无需自己跑基准测试，就能获得实测 `✓` 数值和校准后的估算。[开始共享 →](docs/cli.md#contributing-benchmarks-bench---share)
+>
+> *此前：[llmfit 1.0 — 让每个数字都可验证的里程碑版本 →](https://github.com/AlexsJones/llmfit/discussions/708)*
 
 **数百种模型与提供商，一条命令即可找出你的硬件能运行哪些模型。**
 
@@ -979,6 +981,18 @@ Agent 会在后台调用 `llmfit recommend --json`，解读结果，并提议用
 ## 替代方案
 
 如果你在寻找不同的方案，可以看看 [llm-checker](https://github.com/Pavelevich/llm-checker) -- 一个带有 Ollama 集成的 Node.js CLI 工具，可以直接拉取和基准测试模型。它采用更直接的方式，通过 Ollama 在你的硬件上实际运行模型，而不是从配置参数估算。如果你已安装 Ollama 并想测试真实性能，这是个不错的选择。注意它不支持 MoE（混合专家）架构 -- 所有模型都被视为密集模型，因此 Mixtral 或 DeepSeek-V3 等模型的内存估算将反映总参数量而非较小的活跃子集。
+
+---
+
+## 代码签名
+
+llmfit 的 Windows 发布二进制文件通过 [SignPath.io](https://about.signpath.io/) 进行数字签名（Authenticode），代码签名证书由 [SignPath Foundation](https://signpath.org/) 免费提供。
+
+签名在[发布流水线](.github/workflows/release.yml)中自动完成：只有由 GitHub Actions 从本仓库构建的产物才会提交签名，签名请求由项目维护者（[@AlexsJones](https://github.com/AlexsJones)）审批。
+
+**代码签名政策：**参见 [SignPath Foundation 代码签名政策与条款](https://signpath.org/terms)。
+
+**隐私：**除非用户或安装/运行本程序的人员明确请求，本程序不会向其他联网系统传输任何信息。llmfit 仅在你明确使用相应功能时才会访问外部服务（例如模型下载、运行时提供商查询或社区排行榜）。
 
 ---
 
