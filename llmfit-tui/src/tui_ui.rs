@@ -109,31 +109,12 @@ fn draw_system_bar(frame: &mut Frame, app: &App, area: Rect, tc: &ThemeColors) {
     } else {
         let primary = &app.specs.gpus[0];
         let backend = primary.backend.label();
-        let primary_str = if primary.unified_memory {
-            let shared = primary.vram_gb.unwrap_or(0.0);
-            match app.specs.gpu_available_gb {
-                Some(available) => format!(
-                    "{} ({:.1} GB GPU-available / {:.1} GB shared, {})",
-                    primary.name, available, shared, backend
-                ),
-                None => format!("{} ({:.1} GB shared, {})", primary.name, shared, backend),
-            }
+        // Memory lives in the VRAM field so it is not buried (or truncated)
+        // after the CPU name and leftover SRAM figure.
+        let primary_str = if primary.count > 1 {
+            format!("{} x{} ({})", primary.name, primary.count, backend)
         } else {
-            match primary.vram_gb {
-                Some(vram) if vram > 0.0 => {
-                    if primary.count > 1 {
-                        let total_vram = vram * primary.count as f64;
-                        format!(
-                            "{} x{} ({:.1} GB each = {:.0} GB total, {})",
-                            primary.name, primary.count, vram, total_vram, backend
-                        )
-                    } else {
-                        format!("{} ({:.1} GB, {})", primary.name, vram, backend)
-                    }
-                }
-                Some(_) => format!("{} (shared, {})", primary.name, backend),
-                None => format!("{} ({})", primary.name, backend),
-            }
+            format!("{} ({})", primary.name, backend)
         };
         let extra = app.specs.gpus.len() - 1;
         if extra > 0 {
@@ -260,6 +241,24 @@ fn draw_system_bar(frame: &mut Frame, app: &App, area: Rect, tc: &ThemeColors) {
             ),
             Style::default().fg(tc.fg),
         ),
+    ]);
+    // VRAM is the inference pool. On Strix Halo / UMA carveout systems the
+    // RAM figure is leftover CPU SRAM and must not be the first memory number.
+    if let Some(vram_label) = system_bar_vram_label(&app.specs) {
+        hw_spans.extend([
+            Span::styled("  │  ", Style::default().fg(tc.muted)),
+            Span::styled("VRAM: ", Style::default().fg(tc.muted)),
+            Span::styled(vram_label, Style::default().fg(tc.accent)),
+        ]);
+    }
+    if let Some(uma_label) = system_bar_uma_label(&app.specs) {
+        hw_spans.extend([
+            Span::styled("  │  ", Style::default().fg(tc.muted)),
+            Span::styled("UMA: ", Style::default().fg(tc.muted)),
+            Span::styled(uma_label, Style::default().fg(tc.accent)),
+        ]);
+    }
+    hw_spans.extend([
         Span::styled("  │  ", Style::default().fg(tc.muted)),
         Span::styled("RAM: ", Style::default().fg(tc.muted)),
         Span::styled(
@@ -328,6 +327,27 @@ fn draw_system_bar(frame: &mut Frame, app: &App, area: Rect, tc: &ThemeColors) {
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+}
+
+fn system_bar_vram_label(specs: &llmfit_core::hardware::SystemSpecs) -> Option<String> {
+    let vram = specs.inference_vram_gb()?;
+    Some(if specs.uma_carveout() {
+        format!("{vram:.1} GB")
+    } else if specs.unified_memory {
+        format!("{vram:.1} GB shared")
+    } else if specs.gpu_count > 1 {
+        format!("{vram:.1} GB total")
+    } else {
+        format!("{vram:.1} GB")
+    })
+}
+
+fn system_bar_uma_label(specs: &llmfit_core::hardware::SystemSpecs) -> Option<String> {
+    if !specs.uma_carveout() {
+        return None;
+    }
+    let uma = specs.uma_total_gb()?;
+    Some(format!("{uma:.1} GB"))
 }
 
 fn visible_search_query(query: &str, cursor_position: usize, width: usize) -> (String, u16) {
@@ -4007,7 +4027,18 @@ fn draw_simulation_popup(frame: &mut Frame, app: &App, tc: &ThemeColors) {
         Style::default().fg(tc.muted),
     )));
 
-    if app.specs.unified_memory {
+    if app.real_specs.uma_carveout() {
+        if let Some(uma) = app.real_specs.uma_total_gb() {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  (UMA pool {:.0} GB is BIOS reallocatable; try 1 GB VRAM / {:.0} GB RAM)",
+                    uma,
+                    (uma - 1.0).max(0.0)
+                ),
+                Style::default().fg(tc.muted),
+            )));
+        }
+    } else if app.specs.unified_memory {
         lines.push(Line::from(Span::styled(
             "  (unified memory: RAM also affects VRAM)",
             Style::default().fg(tc.muted),
@@ -5712,6 +5743,35 @@ fn draw_bench(frame: &mut Frame, app: &App, area: Rect, tc: &ThemeColors) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_bar_vram_label_shows_carveout_vram_not_sram() {
+        let specs = llmfit_core::hardware::SystemSpecs {
+            total_ram_gb: 30.48,
+            available_ram_gb: 24.0,
+            total_cpu_cores: 32,
+            cpu_name: "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S".to_string(),
+            has_gpu: true,
+            gpu_vram_gb: Some(96.0),
+            total_gpu_vram_gb: Some(96.0),
+            gpu_available_gb: None,
+            gpu_name: Some("AMD Radeon Graphics".to_string()),
+            gpu_count: 1,
+            unified_memory: true,
+            backend: llmfit_core::hardware::GpuBackend::Rocm,
+            gpus: vec![llmfit_core::hardware::GpuInfo {
+                name: "AMD Radeon Graphics".to_string(),
+                vram_gb: Some(96.0),
+                backend: llmfit_core::hardware::GpuBackend::Rocm,
+                count: 1,
+                unified_memory: true,
+            }],
+            cluster_mode: false,
+            cluster_node_count: 0,
+        };
+        assert_eq!(system_bar_vram_label(&specs).as_deref(), Some("96.0 GB"));
+        assert_eq!(system_bar_uma_label(&specs).as_deref(), Some("126.5 GB"));
+    }
 
     #[test]
     fn truncate_str_handles_multibyte_utf8() {

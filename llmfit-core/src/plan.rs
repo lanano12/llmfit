@@ -735,15 +735,34 @@ pub fn estimate_model_plan_with_config(
     if let Some(gpu_path) = run_paths.iter().find(|p| p.path == PlanRunPath::Gpu)
         && let Some(min_hw) = &gpu_path.minimum
     {
-        let add_good = (min_hw.vram_gb.unwrap_or(0.0) - current_vram).max(0.0);
-        upgrade_deltas.push(UpgradeDelta {
-            resource: "vram_gb".to_string(),
-            add_gb: Some(add_good),
-            add_cores: None,
-            target_fit: Some(FitLevel::Good),
-            path: PlanRunPath::Gpu,
-            description: format!("+{add_good:.1} GB VRAM -> Good"),
-        });
+        let need = min_hw.vram_gb.unwrap_or(0.0);
+        if system.uma_carveout()
+            && let Some(uma) = system.uma_total_gb()
+            && need > current_vram
+            && need <= uma
+        {
+            upgrade_deltas.push(UpgradeDelta {
+                resource: "uma_bios".to_string(),
+                add_gb: Some(0.0),
+                add_cores: None,
+                target_fit: Some(FitLevel::Good),
+                path: PlanRunPath::Gpu,
+                description: format!(
+                    "Reallocate BIOS UMA to the {:.1} GB LPDDR pool (e.g. 1 GB VRAM / rest RAM)",
+                    uma
+                ),
+            });
+        } else {
+            let add_good = (need - current_vram).max(0.0);
+            upgrade_deltas.push(UpgradeDelta {
+                resource: "vram_gb".to_string(),
+                add_gb: Some(add_good),
+                add_cores: None,
+                target_fit: Some(FitLevel::Good),
+                path: PlanRunPath::Gpu,
+                description: format!("+{add_good:.1} GB VRAM -> Good"),
+            });
+        }
     }
     if let Some(gpu_path) = run_paths.iter().find(|p| p.path == PlanRunPath::Gpu)
         && let Some(rec_hw) = &gpu_path.recommended

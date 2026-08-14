@@ -419,21 +419,39 @@ impl ModelFit {
                 // Unified memory (Apple Silicon or NVIDIA Tegra/Grace Blackwell):
                 // GPU and CPU share the same memory pool.
                 // No CpuOffload -- there's no separate pool to spill to.
+                //
+                // Strix Halo / UMA carveout is still flagged unified, but BIOS
+                // partitions LPDDR into VRAM + leftover SRAM. Models that fit
+                // the current VRAM carveout use that (fast, no reboot). Models
+                // that only fit the full VRAM+RAM pool are still pickable —
+                // they need a BIOS remap (e.g. 1 GB VRAM / rest RAM).
                 if let Some(pool) = system.gpu_vram_gb {
-                    notes.push("Unified memory: GPU and CPU share the same pool".to_string());
-                    if model.is_moe {
-                        notes.push(format!(
-                            "MoE: {}/{} experts active (all share unified memory pool)",
-                            model.active_experts.unwrap_or(0),
-                            model.num_experts.unwrap_or(0)
-                        ));
-                    }
-                    if model.is_moe {
-                        (RunMode::Gpu, min_vram, pool)
-                    } else if let Some((_, best_mem)) = choose_quant(pool) {
-                        (RunMode::Gpu, best_mem, pool)
+                    if system.uma_carveout() {
+                        uma_carveout_path(
+                            model,
+                            system,
+                            pool,
+                            min_vram,
+                            default_mem_required,
+                            &choose_quant,
+                            &mut notes,
+                        )
                     } else {
-                        (RunMode::Gpu, default_mem_required, pool)
+                        notes.push("Unified memory: GPU and CPU share the same pool".to_string());
+                        if model.is_moe {
+                            notes.push(format!(
+                                "MoE: {}/{} experts active (all share unified memory pool)",
+                                model.active_experts.unwrap_or(0),
+                                model.num_experts.unwrap_or(0)
+                            ));
+                        }
+                        if model.is_moe {
+                            (RunMode::Gpu, min_vram, pool)
+                        } else if let Some((_, best_mem)) = choose_quant(pool) {
+                            (RunMode::Gpu, best_mem, pool)
+                        } else {
+                            (RunMode::Gpu, default_mem_required, pool)
+                        }
                     }
                 } else {
                     cpu_path(model, system, runtime, estimation_ctx, &mut notes)
@@ -791,6 +809,68 @@ fn score_fit(
             }
         }
     }
+}
+
+/// Score a BIOS UMA carveout APU (Strix Halo / Ryzen AI MAX).
+///
+/// Current VRAM is the fast path. The leftover CPU RAM is the same LPDDR, so
+/// models that only fit `VRAM + RAM` are still pickable — they need a BIOS
+/// remap such as 1 GB VRAM / rest RAM.
+fn uma_carveout_path(
+    model: &LlmModel,
+    system: &SystemSpecs,
+    vram_gb: f64,
+    min_vram: f64,
+    default_mem_required: f64,
+    choose_quant: &impl Fn(f64) -> Option<(&'static str, f64)>,
+    notes: &mut Vec<String>,
+) -> (RunMode, f64, f64) {
+    let uma_total = system.uma_total_gb().unwrap_or(vram_gb);
+    if model.is_moe {
+        notes.push(format!(
+            "MoE: {}/{} experts active",
+            model.active_experts.unwrap_or(0),
+            model.num_experts.unwrap_or(0)
+        ));
+        if min_vram <= vram_gb {
+            notes.push(format!(
+                "GPU VRAM carveout: scoring against {:.1} GB VRAM",
+                vram_gb
+            ));
+            (RunMode::Gpu, min_vram, vram_gb)
+        } else if min_vram <= uma_total {
+            notes.push(bios_uma_reallocate_note(min_vram, vram_gb, uma_total));
+            (RunMode::Gpu, min_vram, uma_total)
+        } else {
+            notes.push(format!(
+                "Exceeds current {:.1} GB VRAM and {:.1} GB UMA pool (VRAM+RAM)",
+                vram_gb, uma_total
+            ));
+            (RunMode::Gpu, min_vram, uma_total)
+        }
+    } else if let Some((_, best_mem)) = choose_quant(vram_gb) {
+        notes.push(format!(
+            "GPU VRAM carveout: scoring against {:.1} GB VRAM",
+            vram_gb
+        ));
+        (RunMode::Gpu, best_mem, vram_gb)
+    } else if let Some((_, best_mem)) = choose_quant(uma_total) {
+        notes.push(bios_uma_reallocate_note(best_mem, vram_gb, uma_total));
+        (RunMode::Gpu, best_mem, uma_total)
+    } else {
+        notes.push(format!(
+            "Exceeds current {:.1} GB VRAM and {:.1} GB UMA pool (VRAM+RAM)",
+            vram_gb, uma_total
+        ));
+        (RunMode::Gpu, default_mem_required, uma_total)
+    }
+}
+
+fn bios_uma_reallocate_note(need_gb: f64, vram_gb: f64, uma_total: f64) -> String {
+    format!(
+        "Fits in the {:.1} GB UMA pool (current BIOS: {:.1} GB VRAM). Reallocate in BIOS — e.g. 1 GB VRAM / rest RAM — to load this {:.1} GB model",
+        uma_total, vram_gb, need_gb
+    )
 }
 
 /// Determine memory pool for CPU-only inference.
@@ -1955,6 +2035,56 @@ mod tests {
         // Should use GPU path on unified memory
         assert_eq!(fit.run_mode, RunMode::Gpu);
         assert!(fit.notes.iter().any(|n| n.contains("Unified memory")));
+    }
+
+    #[test]
+    fn test_strix_halo_carveout_scores_against_vram_not_sram() {
+        // 96 GiB GPU carveout, ~30 GiB leftover CPU SRAM — typical Strix Halo.
+        let model = test_model("70B", 40.0, Some(40.0));
+        let mut system = test_system(30.48, true, Some(96.0));
+        system.unified_memory = true;
+
+        let fit = ModelFit::analyze(&model, &system);
+
+        assert_eq!(fit.run_mode, RunMode::Gpu);
+        assert_eq!(fit.memory_available_gb, 96.0);
+        assert_eq!(fit.fit_level, FitLevel::Perfect);
+        assert!(
+            fit.notes
+                .iter()
+                .any(|n| n.contains("VRAM carveout") && n.contains("96"))
+        );
+
+        // Scoring against leftover SRAM (~30 GB) must not look like a 96 GB GPU.
+        let mut sram_only = system.clone();
+        sram_only.gpu_vram_gb = Some(30.48);
+        sram_only.total_gpu_vram_gb = Some(30.48);
+        let sram_fit = ModelFit::analyze(&model, &sram_only);
+        assert!((sram_fit.memory_available_gb - 30.48).abs() < 0.01);
+        assert_ne!(sram_fit.fit_level, FitLevel::Perfect);
+    }
+
+    #[test]
+    fn test_strix_halo_uma_pool_unlocks_models_above_current_vram() {
+        // ~270B Q2_K is ~109 GB: over a 96 GB carveout, under 96+30 UMA.
+        let model = test_model("270B", 110.0, Some(110.0));
+        let mut system = test_system(30.48, true, Some(96.0));
+        system.unified_memory = true;
+        system.cpu_name = "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S".to_string();
+
+        assert!(system.uma_carveout());
+        let uma = system.uma_total_gb().expect("UMA pool");
+        assert!(uma > 126.0 && uma < 127.0);
+
+        let fit = ModelFit::analyze(&model, &system);
+        assert_eq!(fit.run_mode, RunMode::Gpu);
+        assert!((fit.memory_available_gb - uma).abs() < 0.01);
+        assert_ne!(fit.fit_level, FitLevel::TooTight);
+        assert!(
+            fit.notes
+                .iter()
+                .any(|n| n.contains("UMA pool") && n.contains("BIOS"))
+        );
     }
 
     #[test]

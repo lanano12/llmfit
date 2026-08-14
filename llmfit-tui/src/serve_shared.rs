@@ -25,6 +25,8 @@ pub fn system_json(specs: &SystemSpecs) -> serde_json::Value {
         "has_gpu": specs.has_gpu,
         "gpu_vram_gb": specs.gpu_vram_gb.map(round2),
         "gpu_available_gb": specs.gpu_available_gb.map(round2),
+        "uma_total_gb": specs.uma_total_gb().map(round2),
+        "uma_carveout": specs.uma_carveout(),
         "gpu_name": specs.gpu_name,
         "gpu_count": specs.gpu_count,
         "unified_memory": specs.unified_memory,

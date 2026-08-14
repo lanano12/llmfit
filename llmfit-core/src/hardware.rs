@@ -215,16 +215,21 @@ impl SystemSpecs {
                 })
                 .filter_map(|g| g.vram_gb)
                 .fold(0.0, f64::max);
-            let apu_pool_gb = detect_windows_physical_total_ram_gb()
-                .unwrap_or(detected_amd_vram_gb.max(total_ram_gb));
+            // Never replace BIOS/sysfs/ROCm VRAM with the leftover CPU-visible
+            // SRAM figure. On Strix Halo that leftover is ~32 GB while the GPU
+            // carveout is 64–96 GB — using SRAM here ranks models as if the
+            // machine had no dedicated VRAM.
+            let apu_pool_gb = amd_apu_vram_pool_gb(
+                Some(detected_amd_vram_gb).filter(|v| *v > 0.0),
+                detect_windows_physical_total_ram_gb(),
+                total_ram_gb,
+            );
             let amd_idx = gpus.iter().position(|g| {
                 let lower = g.name.to_lowercase();
                 lower.contains("amd") || lower.contains("radeon")
             });
             if let Some(idx) = amd_idx {
                 gpus[idx].unified_memory = true;
-                // Prefer the larger of BIOS/sysfs carveout vs pool estimate so
-                // Strix Halo DRM VRAM is not overwritten by smaller sysinfo RAM.
                 gpus[idx].vram_gb = Some(gpus[idx].vram_gb.unwrap_or(0.0).max(apu_pool_gb));
                 // When detection could only produce a generic name (e.g. rocm-smi
                 // reported "N/A"), use the APU model instead — it names the iGPU
@@ -2269,15 +2274,21 @@ impl SystemSpecs {
 
     /// Override total and available system RAM with a user-specified value (in GB).
     /// Sets available RAM to 90% of the override to model typical system usage.
-    /// On unified-memory systems (Apple Silicon), this also updates GPU VRAM
-    /// to stay consistent — use `--memory` after `--ram` to override VRAM separately.
+    /// On true unified-memory systems (Apple Silicon, NVIDIA Grace), this also
+    /// updates GPU VRAM to stay consistent — use `--memory` after `--ram` to
+    /// override VRAM separately. A BIOS UMA carveout (VRAM already larger than
+    /// CPU-visible SRAM) is left alone so `--ram` cannot shrink the GPU pool.
     pub fn with_ram_override(mut self, ram_gb: f64) -> Self {
+        let previous_ram_gb = self.total_ram_gb;
+        let previous_vram_gb = self.gpu_vram_gb.unwrap_or(0.0);
+        let keep_carveout_vram = is_uma_carveout(previous_vram_gb, previous_ram_gb)
+            && ram_gb + UMA_CARVEOUT_MIN_GAP_GB < previous_vram_gb;
         self.total_ram_gb = ram_gb;
         self.available_ram_gb = ram_gb * 0.9;
         // The detected GPU-available cap describes the real host, not the
         // simulated one; clear it rather than report a stale figure.
         self.gpu_available_gb = None;
-        if self.unified_memory {
+        if self.unified_memory && !keep_carveout_vram {
             self.gpu_vram_gb = Some(ram_gb);
             self.total_gpu_vram_gb = Some(ram_gb);
             for gpu in &mut self.gpus {
@@ -2289,6 +2300,46 @@ impl SystemSpecs {
         self
     }
 
+    /// VRAM used for fit scoring: total across cards when known.
+    pub fn inference_vram_gb(&self) -> Option<f64> {
+        self.total_gpu_vram_gb
+            .or(self.gpu_vram_gb)
+            .filter(|v| *v > 0.0)
+    }
+
+    /// True when GPU VRAM is a BIOS carveout larger than CPU-visible RAM
+    /// (Strix Halo 96 GiB VRAM + 32 GiB SRAM). The leftover SRAM must not be
+    /// presented or scored as the GPU pool.
+    pub fn uma_carveout(&self) -> bool {
+        self.gpu_vram_gb
+            .is_some_and(|vram| is_uma_carveout(vram, self.total_ram_gb))
+    }
+
+    /// Full LPDDR pool the BIOS can reassign between VRAM and CPU-visible RAM.
+    /// On a 96 GiB + 32 GiB Strix Halo split this is ~128 GB — the same silicon
+    /// as a 1 GiB VRAM / 127 GiB RAM map.
+    pub fn uma_total_gb(&self) -> Option<f64> {
+        let vram = self.gpu_vram_gb.unwrap_or(0.0);
+        if self.uma_carveout() {
+            Some(vram + self.total_ram_gb)
+        } else if self.unified_memory && is_amd_unified_memory_apu(&self.cpu_name) {
+            Some(vram.max(self.total_ram_gb))
+        } else {
+            None
+        }
+    }
+
+    /// Suggested BIOS map that hands almost all LPDDR to the OS (1 GiB
+    /// framebuffer, rest SRAM) so runtimes can allocate the full UMA pool.
+    pub fn uma_max_ram_split_gb(&self) -> Option<(f64, f64)> {
+        let total = self.uma_total_gb()?;
+        if !self.uma_carveout() {
+            return None;
+        }
+        const FRAMEBUFFER_GB: f64 = 1.0;
+        Some((FRAMEBUFFER_GB, (total - FRAMEBUFFER_GB).max(0.0)))
+    }
+
     /// Override the detected CPU core count with a user-specified value.
     pub fn with_cpu_core_override(mut self, cores: usize) -> Self {
         self.total_cpu_cores = cores;
@@ -2298,6 +2349,32 @@ impl SystemSpecs {
     pub fn display(&self) {
         println!("\n=== System Specifications ===");
         println!("CPU: {} ({} cores)", self.cpu_name, self.total_cpu_cores);
+        if let Some(vram) = self.inference_vram_gb() {
+            if self.gpu_count > 1 {
+                println!(
+                    "VRAM: {:.2} GB ({} GPUs, {:.2} GB each)",
+                    vram,
+                    self.gpu_count,
+                    self.gpu_vram_gb.unwrap_or(vram / self.gpu_count as f64),
+                );
+            } else if self.uma_carveout() {
+                println!("VRAM: {:.2} GB (GPU carveout)", vram);
+            } else if self.unified_memory {
+                println!("VRAM: {:.2} GB (shared with RAM)", vram);
+            } else {
+                println!("VRAM: {:.2} GB", vram);
+            }
+        }
+        if let Some(uma) = self.uma_total_gb() {
+            if let Some((fb, ram)) = self.uma_max_ram_split_gb() {
+                println!(
+                    "UMA pool: {:.2} GB (BIOS reallocatable; e.g. {:.0} GB VRAM + {:.0} GB RAM)",
+                    uma, fb, ram
+                );
+            } else {
+                println!("UMA pool: {:.2} GB", uma);
+            }
+        }
         println!("Total RAM: {:.2} GB", self.total_ram_gb);
         println!("Available RAM: {:.2} GB", self.available_ram_gb);
         if let Some(bw) = measured_ram_bandwidth_gbps() {
@@ -2314,7 +2391,7 @@ impl SystemSpecs {
                 } else {
                     "GPU: ".to_string()
                 };
-                if gpu.unified_memory {
+                if gpu.unified_memory && !self.uma_carveout() {
                     println!(
                         "{}{}",
                         prefix,
@@ -2521,6 +2598,25 @@ fn is_amd_apu(cpu_name: &str) -> bool {
 /// the physical figure is preferred. Ordinary firmware/reserved overhead is
 /// well under 1 GB; BIOS UMA carveout options start at 1 GB.
 const UMA_CARVEOUT_MIN_GAP_GB: f64 = 1.0;
+
+/// True when GPU VRAM is a dedicated BIOS carveout, not the CPU-visible RAM
+/// leftover. Strix Halo commonly exposes 96 GiB VRAM + ~32 GiB SRAM.
+fn is_uma_carveout(vram_gb: f64, cpu_visible_ram_gb: f64) -> bool {
+    vram_gb > cpu_visible_ram_gb + UMA_CARVEOUT_MIN_GAP_GB
+}
+
+/// Pick the AMD APU VRAM pool. Prefer detected GPU VRAM (DRM/ROCm/registry)
+/// and Windows physical DIMM total over CPU-visible SRAM from sysinfo.
+fn amd_apu_vram_pool_gb(
+    detected_vram_gb: Option<f64>,
+    windows_physical_ram_gb: Option<f64>,
+    cpu_visible_ram_gb: f64,
+) -> f64 {
+    windows_physical_ram_gb
+        .unwrap_or(0.0)
+        .max(detected_vram_gb.unwrap_or(0.0))
+        .max(cpu_visible_ram_gb)
+}
 
 /// Pure decision half of the issue-#810 RAM fix: prefer the physical DIMM
 /// total only when it exceeds the sysinfo figure by a clear carveout-sized
@@ -4038,6 +4134,62 @@ GPU id = 1 (NVIDIA GeForce RTX 4090)
         // A physical read *below* the OS view (bad WMI data) must never win.
         let got = super::apply_ram_carveout_override(32.0, 16.0);
         assert!((got - 32.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_amd_apu_vram_pool_prefers_detected_vram_over_sram() {
+        // This machine: 96 GiB GPU carveout, ~30 GiB CPU-visible SRAM.
+        // Fit scoring must use the VRAM carveout, not the leftover SRAM.
+        let pool = super::amd_apu_vram_pool_gb(Some(96.0), None, 30.48);
+        assert!((pool - 96.0).abs() < f64::EPSILON);
+        assert!(super::is_uma_carveout(96.0, 30.48));
+        assert!(!super::is_uma_carveout(30.5, 30.48));
+        assert!(!super::is_uma_carveout(36.0, 36.0));
+    }
+
+    #[test]
+    fn test_amd_apu_vram_pool_windows_physical_still_wins() {
+        // Windows path: physical DIMM total is the full unified pool.
+        let pool = super::amd_apu_vram_pool_gb(Some(96.0), Some(128.0), 32.0);
+        assert!((pool - 128.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_ram_override_does_not_shrink_strix_halo_vram() {
+        let specs = SystemSpecs {
+            total_ram_gb: 30.48,
+            available_ram_gb: 24.0,
+            total_cpu_cores: 32,
+            cpu_name: "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S".to_string(),
+            has_gpu: true,
+            gpu_vram_gb: Some(96.0),
+            total_gpu_vram_gb: Some(96.0),
+            gpu_available_gb: None,
+            gpu_name: Some("AMD Radeon Graphics".to_string()),
+            gpu_count: 1,
+            unified_memory: true,
+            backend: super::GpuBackend::Rocm,
+            gpus: vec![super::GpuInfo {
+                name: "AMD Radeon Graphics".to_string(),
+                vram_gb: Some(96.0),
+                backend: super::GpuBackend::Rocm,
+                count: 1,
+                unified_memory: true,
+            }],
+            cluster_mode: false,
+            cluster_node_count: 0,
+        };
+
+        assert!(specs.uma_carveout());
+        assert_eq!(specs.inference_vram_gb(), Some(96.0));
+        let uma = specs.uma_total_gb().expect("UMA total");
+        assert!((uma - 126.48).abs() < 0.01);
+        assert_eq!(specs.uma_max_ram_split_gb(), Some((1.0, uma - 1.0)));
+
+        let overridden = specs.with_ram_override(30.48);
+        assert_eq!(overridden.gpu_vram_gb, Some(96.0));
+        assert_eq!(overridden.total_gpu_vram_gb, Some(96.0));
+        assert_eq!(overridden.gpus[0].vram_gb, Some(96.0));
     }
 
     #[test]
