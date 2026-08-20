@@ -9067,7 +9067,7 @@
           "createdAt": "2026-05-30T19:00:13.795Z",
           "notes": null,
           "engineFlags": {
-            "commandSnippet": "/home/ubuntu/llama.cpp/build/bin/llama-server --flash-attn on -m Huihui-Qwen3.6-27B-abliterated-ggml-model-Q4_K.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0",
+            "commandSnippet": "/home/l/llama.cpp/build/bin/llama-server --flash-attn on -m Huihui-Qwen3.6-27B-abliterated-ggml-model-Q4_K.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0",
             "tensorParallel": null,
             "gpuLayers": 99,
             "kvCacheDtype": "q8_0",
@@ -9205,7 +9205,7 @@
           "createdAt": "2026-05-29T01:48:51.491Z",
           "notes": "Benchmark via benchkit (Run #41). RTX 3090 at 260W power limit. MTP + ngram speculative decoding. ~48 tok/s at agent-sized contexts.",
           "engineFlags": {
-            "commandSnippet": "/home/ubuntu/llama.cpp/build/bin/llama-server --flash-attn on -m /home/ubuntu/models/qwen3.6-27b-mtp-q4km/Qwen3.6-27B-Q4_K_M-MTP.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0 --spec-ngram-mod-n-match 24 --spec-ngram-mod-n-min 48 --spec-ngram-mod-n-max 64 --spec-ngram-map-k4v-size-n 16 --spec-ngram-map-k4v-size-m 96 --spec-ngram-map-k4v-min-hits 1",
+            "commandSnippet": "/home/l/llama.cpp/build/bin/llama-server --flash-attn on -m /home/l/models/qwen3.6-27b-mtp-q4km/Qwen3.6-27B-Q4_K_M-MTP.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0 --spec-ngram-mod-n-match 24 --spec-ngram-mod-n-min 48 --spec-ngram-mod-n-max 64 --spec-ngram-map-k4v-size-n 16 --spec-ngram-map-k4v-size-m 96 --spec-ngram-map-k4v-min-hits 1",
             "tensorParallel": null,
             "gpuLayers": 99,
             "kvCacheDtype": "q8_0",
@@ -9343,7 +9343,7 @@
           "createdAt": "2026-05-29T02:10:50.400Z",
           "notes": "Updated llama.cpp from d14ce3dab \u2192 19e92c33e (b9388). MTP VRAM leak fix, backend sampling. ~400 MiB VRAM savings vs previous build.",
           "engineFlags": {
-            "commandSnippet": "/home/ubuntu/llama.cpp/build/bin/llama-server --flash-attn on -m /home/ubuntu/models/qwen3.6-27b-mtp-q4km/Qwen3.6-27B-Q4_K_M-MTP.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0 --spec-ngram-mod-n-match 24 --spec-ngram-mod-n-min 48 --spec-ngram-mod-n-max 64 --spec-ngram-map-k4v-size-n 16 --spec-ngram-map-k4v-size-m 96 --spec-ngram-map-k4v-min-hits 1",
+            "commandSnippet": "/home/l/llama.cpp/build/bin/llama-server --flash-attn on -m /home/l/models/qwen3.6-27b-mtp-q4km/Qwen3.6-27B-Q4_K_M-MTP.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0 --spec-ngram-mod-n-match 24 --spec-ngram-mod-n-min 48 --spec-ngram-mod-n-max 64 --spec-ngram-map-k4v-size-n 16 --spec-ngram-map-k4v-size-m 96 --spec-ngram-map-k4v-min-hits 1",
             "tensorParallel": null,
             "gpuLayers": 99,
             "kvCacheDtype": "q8_0",
@@ -9688,7 +9688,7 @@
           "createdAt": "2026-05-30T17:29:20.995Z",
           "notes": null,
           "engineFlags": {
-            "commandSnippet": "/home/ubuntu/llama.cpp/build/bin/llama-server --flash-attn on -m Qwen3.6-27B-Q4_K_M-MTP.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0",
+            "commandSnippet": "/home/l/llama.cpp/build/bin/llama-server --flash-attn on -m Qwen3.6-27B-Q4_K_M-MTP.gguf -c 114688 --port 8080 --parallel 1 -ngl 99 --host 0.0.0.0 --no-mmap -ctk q8_0 -ctv q8_0 --cache-ram 0 --spec-type draft-mtp,ngram-mod,ngram-map-k4v --spec-draft-n-max 3 --spec-draft-p-min 0.0",
             "tensorParallel": null,
             "gpuLayers": 99,
             "kvCacheDtype": "q8_0",
